@@ -1,0 +1,190 @@
+openapi: 3.1.0
+info:
+  title: dispatch-service API
+  description: Диспетчеризация, отслеживание курьеров в Redis и подбор исполнителя
+  version: 1.0.0
+
+paths:
+  /api/v1/couriers/shifts:
+    post:
+      tags: [public]
+      summary: Открыть или закрыть смену курьера
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courierId, action]
+              properties:
+                courierId:
+                  type: string
+                  format: uuid
+                  example: "4c5b6a7d-8e9f-0a1b-2c3d-4e5f6a7b8c9d"
+                action:
+                  type: string
+                  enum: [START_SHIFT, END_SHIFT]
+                  example: "START_SHIFT"
+      responses:
+        '200':
+          description: Статус смены изменен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  courierId: { type: string, format: uuid }
+                  status: { type: string, example: "ONLINE" }
+        '400':
+          description: Ошибка запроса
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/dispatch/location:
+    post:
+      tags: [public]
+      summary: Обновить геопозицию курьера в Redis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LocationUpdateRequest'
+      responses:
+        '200':
+          description: Координаты успешно сохранены в Redis
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success: { type: boolean, example: true }
+        '400':
+          description: Неверные координаты или формат
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/couriers/{courierId}/assignment:
+    get:
+      tags: [public]
+      summary: Получить текущий назначенный заказ для курьера
+      parameters:
+        - in: path
+          name: courierId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Текущее назначение
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId: { type: string, format: uuid, example: "d290f1ee-6c54-4b01-90e6-d701748f0851" }
+                  assignedAt: { type: string, format: date-time }
+        '404':
+          description: Активных назначений нет
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+components:
+  schemas:
+    LocationUpdateRequest:
+      type: object
+      required: [courierId, lat, lon, status]
+      properties:
+        courierId:
+          type: string
+          format: uuid
+          example: "4c5b6a7d-8e9f-0a1b-2c3d-4e5f6a7b8c9d"
+        lat:
+          type: number
+          format: float
+          example: 47.222078
+        lon:
+          type: number
+          format: float
+          example: 39.720358
+        status:
+          type: string
+          enum: [ONLINE, BUSY, OFFLINE]
+          example: ONLINE
+
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://api.delivery.com/errors/invalid-location"
+        title:
+          type: string
+          example: "Некорректная геопозиция"
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          example: "Широта должна быть в диапазоне от -90 до 90"
+
+    # --- Асинхронные события Kafka (Топик: dispatch.events, Издатель: dispatch-service) ---
+    CourierAssignedEvent:
+      type: object
+      description: "Топик: dispatch.events | Издатель: dispatch-service | Подписчики: order-service, notification-service"
+      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          example: "5a6b7c8d-9e0f-1a2b-3c4d-5e6f7a8b9c0d"
+        eventType:
+          type: string
+          example: "dispatch.courier_assigned"
+        schemaVersion:
+          type: integer
+          example: 1
+        occurredAt:
+          type: string
+          format: date-time
+          example: "2026-10-30T10:06:15Z"
+        payload:
+          type: object
+          required: [orderId, courierId]
+          properties:
+            orderId: { type: string, format: uuid }
+            courierId: { type: string, format: uuid }
+
+    SearchFailedEvent:
+      type: object
+      description: "Топик: dispatch.events | Издатель: dispatch-service | Подписчики: order-service, payment-service, notification-service"
+      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          example: "9e8d7c6b-5a4f-3e2d-1c0b-9a8b7c6d5e4f"
+        eventType:
+          type: string
+          example: "dispatch.search_failed"
+        schemaVersion:
+          type: integer
+          example: 1
+        occurredAt:
+          type: string
+          format: date-time
+          example: "2026-10-30T10:20:00Z"
+        payload:
+          type: object
+          required: [orderId, reason]
+          properties:
+            orderId: { type: string, format: uuid }
+            reason: { type: string, example: "NO_COURIERS_AVAILABLE_TIMEOUT" }

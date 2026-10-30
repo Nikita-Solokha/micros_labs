@@ -1,0 +1,219 @@
+openapi: 3.1.0
+info:
+  title: payment-service API
+  description: Управление платежами, интеграция с банком и возвраты
+  version: 1.0.0
+
+paths:
+  /internal/v1/payments:
+    post:
+      tags: [internal]
+      summary: Создать платеж для заказа (вызывается из order-service)
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          description: Ключ идемпотентности транзакции
+          schema:
+            type: string
+            format: uuid
+            example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [orderId, amount]
+              properties:
+                orderId:
+                  type: string
+                  format: uuid
+                  example: "d290f1ee-6c54-4b01-90e6-d701748f0851"
+                amount:
+                  type: number
+                  format: float
+                  example: 450.00
+      responses:
+        '201':
+          description: Платеж создан, возвращена ссылка на оплату
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '400':
+          description: Ошибка валидации параметров
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/payments/webhook:
+    post:
+      tags: [public]
+      summary: Прием уведомлений от внешнего платёжного шлюза (вебхук)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [paymentId, status, signature]
+              properties:
+                paymentId:
+                  type: string
+                  format: uuid
+                  example: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+                status:
+                  type: string
+                  enum: [SUCCESS, FAILED]
+                  example: "SUCCESS"
+                signature:
+                  type: string
+                  example: "sha256_hash_here"
+      responses:
+        '200':
+          description: Вебхук успешно принят и обработан
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received: { type: boolean, example: true }
+        '400':
+          description: Неверная подпись или структура запроса
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /internal/v1/payments/{paymentId}/refund:
+    post:
+      tags: [internal]
+      summary: Инициировать возврат средств (компенсирующая транзакция Саги)
+      parameters:
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                  example: "COURIER_NOT_FOUND_TIMEOUT"
+      responses:
+        '200':
+          description: Возврат успешно оформлен
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  refundId: { type: string, format: uuid }
+                  status: { type: string, example: "REFUNDED" }
+        '404':
+          description: Платеж не найден
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+components:
+  schemas:
+    PaymentResponse:
+      type: object
+      required: [paymentId, paymentUrl, status]
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+          example: "b2e0c7f4-1a93-4f0d-8c6e-7d25a1e9f310"
+        paymentUrl:
+          type: string
+          format: uri
+          example: "https://pay.bank.com/session/b2e0c7f4"
+        status:
+          type: string
+          enum: [PENDING, COMPLETED, FAILED, REFUNDED]
+          example: PENDING
+
+    Problem:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          example: "https://api.delivery.com/errors/payment-failed"
+        title:
+          type: string
+          example: "Ошибка проведения операции"
+        status:
+          type: integer
+          example: 400
+        detail:
+          type: string
+          example: "Недостаточно средств на карте"
+
+    # --- Асинхронные события Kafka (Топик: payments.events, Издатель: payment-service) ---
+    PaymentCompletedEvent:
+      type: object
+      description: "Топик: payments.events | Издатель: payment-service | Подписчики: order-service, dispatch-service"
+      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          example: "3f6c2b0e-8d1a-4c57-9e2f-5a1b7c9d0e44"
+        eventType:
+          type: string
+          example: "payment.completed"
+        schemaVersion:
+          type: integer
+          example: 1
+        occurredAt:
+          type: string
+          format: date-time
+          example: "2026-10-30T10:05:00Z"
+        payload:
+          type: object
+          required: [paymentId, orderId, amount]
+          properties:
+            paymentId: { type: string, format: uuid }
+            orderId: { type: string, format: uuid }
+            amount: { type: number, format: float, example: 450.00 }
+
+    PaymentRefundedEvent:
+      type: object
+      description: "Топик: payments.events | Издатель: payment-service | Подписчики: notification-service, order-service"
+      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          example: "8a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d"
+        eventType:
+          type: string
+          example: "payment.refunded"
+        schemaVersion:
+          type: integer
+          example: 1
+        occurredAt:
+          type: string
+          format: date-time
+          example: "2026-10-30T10:20:00Z"
+        payload:
+          type: object
+          required: [paymentId, orderId, amount, reason]
+          properties:
+            paymentId: { type: string, format: uuid }
+            orderId: { type: string, format: uuid }
+            amount: { type: number, format: float }
+            reason: { type: string }
