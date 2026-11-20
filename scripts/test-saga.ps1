@@ -11,6 +11,7 @@ param(
     [string]$Order = "http://localhost:8081",
     [string]$Dispatch = "http://localhost:8082",
     [string]$Pay = "http://localhost:8083",
+    [string]$Notify = "http://localhost:8084",
     [int]$SearchTimeoutSec = 20
 )
 
@@ -103,6 +104,17 @@ function WaitStatus([string]$id, [string]$want, [int]$seconds = 15) {
     return $r
 }
 
+# Ждёт, пока notification-service отправит нужное число SMS по заказу.
+function WaitSms([string]$orderId, [int]$count, [int]$seconds = 10) {
+    $deadline = (Get-Date).AddSeconds($seconds)
+    do {
+        $r = Call GET "$Notify/internal/v1/notifications/logs?orderId=$orderId"
+        if ($r.Json.total -ge $count) { return $r }
+        Start-Sleep -Milliseconds 300
+    } while ((Get-Date) -lt $deadline)
+    return $r
+}
+
 function NewOrder {
     return (Call POST "$Order/api/v1/orders" (ToJson @{ originAddress = "pl. Gagarina, 1"; destinationAddress = "ul. Bolshaya Sadovaya, 105"; weight = 2.5 }) @{ "Idempotency-Key" = (NewId) })
 }
@@ -112,7 +124,7 @@ $lat = 47.2357
 $lon = 39.7015
 
 Section "0. Сервисы запущены"
-foreach ($u in @($Order, $Dispatch, $Pay)) {
+foreach ($u in @($Order, $Dispatch, $Pay, $Notify)) {
     $r = Call GET "$u/health"
     Check "$u/health -> 200" ($r.Status -eq 200) $r
 }
@@ -146,6 +158,10 @@ Check "курьер отметил доставку (dispatch -> order, sync)" (
 $r = WaitStatus $o1.id "DELIVERED" 5
 Check "заказ DELIVERED" ($r.Json.status -eq "DELIVERED") $r
 
+$r = WaitSms $o1.id 2
+Check "notification: клиенту ушли 2 SMS (курьер назначен, заказ доставлен)" ($r.Json.total -eq 2) $r
+foreach ($it in @($r.Json.items)) { Write-Host "         SMS $($it.recipient): $($it.message)" }
+
 $r = Call POST "$Dispatch/api/v1/couriers/shifts" (ToJson @{ courierId = $courier; action = "END_SHIFT" })
 Check "курьер закрыл смену (OFFLINE)" ($r.Status -eq 200 -and $r.Json.status -eq "OFFLINE") $r
 
@@ -169,6 +185,10 @@ do {
     Start-Sleep -Milliseconds 300
 } while ((Get-Date) -lt $deadline)
 Check "dispatch.search_failed -> payment вернул деньги (REFUNDED)" ($p.Json.status -eq "REFUNDED") $p
+
+$r = WaitSms $o2.id 1
+Check "dispatch.search_failed -> notification: SMS об отмене" ($r.Json.total -eq 1) $r
+foreach ($it in @($r.Json.items)) { Write-Host "         SMS $($it.recipient): $($it.message)" }
 
 # ---------------------------------------------------------------------------
 Write-Host ""

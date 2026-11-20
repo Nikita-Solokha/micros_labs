@@ -1,0 +1,10 @@
+.git
+.idea
+.vscode
+lab*/
+*.docx
+docs
+postman
+scripts
+tests
+api

@@ -1,12 +1,32 @@
-# Инфраструктура для лабораторной работы №4.
-# Запуск:  docker compose up -d
-# Kafka UI: http://localhost:8090
+# Вся система лабораторной работы №4 одной командой:
+#   docker compose up -d --build
 #
-# Kafka слушает два адреса:
-#   localhost:9092 — для сервисов, запущенных на хосте через `go run`
-#   kafka:29092    — для сервисов внутри docker-compose
+# Точки входа на хосте:
+#   http://localhost:8080  — API Gateway (единственная точка входа для клиента)
+#   http://localhost:8090  — Kafka UI
+#   http://localhost:9090  — банк-заглушка (сюда ведёт paymentUrl)
+#   8081-8084              — сервисы напрямую, только для отладки и проверки internal-эндпоинтов
+#
+# Демонстрационные настройки можно менять переменными окружения хоста:
+#   SEARCH_TIMEOUT (по умолчанию 20s; по ТЗ — 15m), SMS_FAIL, FAIL_REFUNDS
+
+x-go-service: &go-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  depends_on:
+    kafka:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+
+x-common-env: &common-env
+  KAFKA_BROKERS: kafka:29092
+  WEBHOOK_SECRET: dev-secret
 
 services:
+  # ------------------------------------------------------------ инфраструктура
   kafka:
     image: apache/kafka:3.9.0
     container_name: kafka
@@ -33,7 +53,6 @@ services:
       timeout: 10s
       retries: 20
 
-  # Одноразовый контейнер: создаёт топики из лабы 3 и завершается.
   kafka-init:
     image: apache/kafka:3.9.0
     container_name: kafka-init
@@ -49,7 +68,6 @@ services:
         /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:29092 --list
     restart: "no"
 
-  # Веб-интерфейс, чтобы смотреть топики и сообщения (удобно на защите).
   kafka-ui:
     image: kafbat/kafka-ui:latest
     container_name: kafka-ui
@@ -61,3 +79,109 @@ services:
     depends_on:
       kafka:
         condition: service_healthy
+
+  # ------------------------------------------------------------ API Gateway
+  gateway:
+    image: nginx:1.27-alpine
+    container_name: gateway
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - order-service
+      - dispatch-service
+      - payment-service
+    restart: unless-stopped
+
+  # ------------------------------------------------------------ бизнес-сервисы
+  order-service:
+    <<: *go-service
+    container_name: order-service
+    build:
+      context: .
+      args:
+        SERVICE: services/order-service
+    ports:
+      - "8081:8081"
+    environment:
+      <<: *common-env
+      PORT: "8081"
+      PAYMENT_URL: http://payment-service:8083
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8081/health"]
+      interval: 5s
+      retries: 10
+
+  dispatch-service:
+    <<: *go-service
+    container_name: dispatch-service
+    build:
+      context: .
+      args:
+        SERVICE: services/dispatch-service
+    ports:
+      - "8082:8082"
+    environment:
+      <<: *common-env
+      PORT: "8082"
+      ORDER_URL: http://order-service:8081
+      SEARCH_TIMEOUT: ${SEARCH_TIMEOUT:-20s}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8082/health"]
+      interval: 5s
+      retries: 10
+
+  payment-service:
+    <<: *go-service
+    container_name: payment-service
+    build:
+      context: .
+      args:
+        SERVICE: services/payment-service
+    ports:
+      - "8083:8083"
+    environment:
+      <<: *common-env
+      PORT: "8083"
+      BANK_URL: http://bank-mock:9090
+      # банк присылает вебхук через API Gateway, как внешняя система
+      WEBHOOK_URL: http://gateway:8080/api/v1/payments/webhook
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/health"]
+      interval: 5s
+      retries: 10
+
+  notification-service:
+    <<: *go-service
+    container_name: notification-service
+    build:
+      context: .
+      args:
+        SERVICE: services/notification-service
+    ports:
+      - "8084:8084"
+    environment:
+      <<: *common-env
+      PORT: "8084"
+      SMS_FAIL: ${SMS_FAIL:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/health"]
+      interval: 5s
+      retries: 10
+
+  # ------------------------------------------------------------ моки внешних систем
+  bank-mock:
+    container_name: bank-mock
+    build:
+      context: .
+      args:
+        SERVICE: mocks/bank-mock
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    environment:
+      PORT: "9090"
+      PUBLIC_URL: http://localhost:9090   # ссылка на оплату открывается в браузере хоста
+      WEBHOOK_SECRET: dev-secret
+      FAIL_REFUNDS: ${FAIL_REFUNDS:-false}
