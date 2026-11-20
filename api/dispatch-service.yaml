@@ -41,6 +41,18 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '404':
+          description: END_SHIFT для курьера, который не выходил на смену
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Нельзя закрыть смену с активным заказом
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/v1/dispatch/location:
     post:
@@ -63,6 +75,18 @@ paths:
                   success: { type: boolean, example: true }
         '400':
           description: Неверные координаты или формат
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Курьер не выходил на смену
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Смена закрыта или попытка уйти OFFLINE с активным заказом
           content:
             application/problem+json:
               schema:
@@ -91,6 +115,48 @@ paths:
                   assignedAt: { type: string, format: date-time }
         '404':
           description: Активных назначений нет
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/v1/couriers/{courierId}/assignment/complete:
+    post:
+      tags: [public]
+      summary: Курьер отмечает заказ доставленным (ЛР4)
+      description: >
+        dispatch-service синхронно вызывает order-service
+        POST /internal/v1/orders/{orderId}/delivered и только после подтверждения освобождает курьера.
+      parameters:
+        - in: path
+          name: courierId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Доставка подтверждена
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId: { type: string, format: uuid }
+                  status: { type: string, example: "DELIVERED" }
+        '404':
+          description: Курьер не найден или у него нет активного назначения
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: order-service отклонил операцию
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: order-service недоступен — курьер остаётся BUSY, запрос можно повторить
           content:
             application/problem+json:
               schema:

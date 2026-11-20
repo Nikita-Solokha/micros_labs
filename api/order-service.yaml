@@ -47,11 +47,24 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '503':
+          description: payment-service недоступен — заказ отменён (компенсация, cancelReason=PAYMENT_SERVICE_UNAVAILABLE)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
     get:
       tags: [public]
       summary: Получить список заказов клиента с пагинацией
       parameters:
+        - in: header
+          name: X-Client-Id
+          required: false
+          description: Идентификатор клиента (в продакшене проставляется API Gateway из JWT)
+          schema:
+            type: string
+          example: "client-42"
         - in: query
           name: page
           schema:
@@ -125,6 +138,58 @@ paths:
                 orderId: "d290f1ee-6c54-4b01-90e6-d701748f0851"
                 status: "PAID"
 
+  /internal/v1/orders/{orderId}/delivered:
+    post:
+      tags: [internal]
+      summary: Отметить заказ доставленным (вызывается из dispatch-service, ЛР4)
+      parameters:
+        - in: path
+          name: orderId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [courierId]
+              properties:
+                courierId:
+                  type: string
+            example:
+              courierId: "4c5b6a7d-8e9f-0a1b-2c3d-4e5f6a7b8c9d"
+      responses:
+        '200':
+          description: Заказ переведён в DELIVERED (повторный вызов идемпотентен), публикуется order.delivered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId: { type: string, format: uuid }
+                  status: { type: string, example: "DELIVERED" }
+        '400':
+          description: Не передан courierId
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '404':
+          description: Заказ не найден
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '409':
+          description: Недопустимый переход статуса (заказ не ASSIGNED или назначен другому курьеру)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
 components:
   schemas:
     CreateOrderRequest:
@@ -161,10 +226,27 @@ components:
           type: number
           format: float
           example: 2.5
+        price:
+          type: number
+          format: float
+          description: "Стоимость: 200 + 100 * вес (кг)"
+          example: 450
+        paymentId:
+          type: string
+          format: uuid
         paymentUrl:
           type: string
           format: uri
           example: "https://pay.bank.com/session/d290f1ee"
+        courierId:
+          type: string
+          description: Назначенный курьер (после dispatch.courier_assigned)
+        cancelReason:
+          type: string
+          enum: [PAYMENT_FAILED, PAYMENT_SERVICE_UNAVAILABLE, COURIER_NOT_FOUND]
+        updatedAt:
+          type: string
+          format: date-time
         createdAt:
           type: string
           format: date-time

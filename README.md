@@ -1,3 +1,179 @@
+# Лабораторная работа №4. Реализация микросервисов
+
+Реализация системы доставки посылок, спроектированной в [лабораторной работе №3](#лабораторная-работа-3-декомпозиция-и-проектирование-микросервисной-системы) (описание предметной области, архитектура и контракты — ниже в этом же файле).
+
+## Стек технологий
+
+| Что | Выбор | Почему |
+| :--- | :--- | :--- |
+| Язык | **Go 1.27** | Статически собранный бинарник без зависимостей → маленькие Docker-образы и быстрый старт; горутины удобны для фоновых задач (поиск курьера, чтение Kafka); выбран ещё в ЛР3. |
+| HTTP | стандартная библиотека `net/http` | Роутер Go 1.22+ поддерживает методы и параметры пути (`POST /api/v1/orders/{id}`) — фреймворк не нужен. |
+| Брокер | **Apache Kafka 3.9** (KRaft) + клиент `segmentio/kafka-go` | Как в ЛР3: несколько независимых подписчиков на событие, порядок событий одного заказа (ключ = `orderId`). |
+| API Gateway | **Nginx** | Маршрутизация, закрытие `/internal`, rate limiting, `X-Request-Id` — без кода. |
+| Запуск | **Docker Compose** | Вся система одной командой. |
+| Тесты | `testing` + `net/http/httptest` | Unit-тесты, тесты эндпоинтов и сквозные тесты саги без внешних зависимостей. |
+
+## Что реализовано
+
+| Сервис | Порт | Ответственность |
+| :--- | :--- | :--- |
+| `order-service` | 8081 | Заказы и их конечный автомат (`PENDING_PAYMENT → PAID → ASSIGNED → DELIVERED`, `CANCELLED`), расчёт цены, первый шаг саги |
+| `dispatch-service` | 8082 | Смены и координаты курьеров, подбор ближайшего свободного курьера, таймаут поиска |
+| `payment-service` | 8083 | Платежи, вебхук банка (подпись HMAC-SHA256), возвраты — компенсирующее действие |
+| `notification-service` | 8084 | SMS клиенту по событиям, журнал отправок |
+| `gateway` (Nginx) | **8080** | Единственная точка входа клиента |
+| `bank-mock` | 9090 | Заглушка внешнего платёжного шлюза |
+| Kafka / Kafka UI | 9092 / 8090 | Брокер событий и веб-интерфейс к нему |
+
+Все 4 бизнес-сервиса из ЛР3 реализованы. Общий код — в `pkg/`:
+
+* `pkg/problem` — **единая модель ошибок** RFC 7807 (`application/problem+json`: `type`, `title`, `status`, `detail`, `instance`) во всех сервисах и в gateway;
+* `pkg/idempotency` — **`Idempotency-Key`** (повтор → сохранённый ответ с заголовком `Idempotent-Replayed: true`, тот же ключ с другим телом → 409) и дедупликация событий по `eventId`;
+* `pkg/events` — конверт события (`eventId`, `eventType`, `schemaVersion`, `occurredAt`, `correlationId`, `payload`), брокеры Kafka и in-memory, DLQ;
+* `pkg/httpx` — JSON, логирование каждого запроса (JSON-логи `slog`), сквозной `X-Request-Id`, перехват паник;
+* `pkg/webhook` — подпись вебхуков банка.
+
+### Взаимодействия
+
+**Синхронные (REST), 3 шт.:**
+
+| № | Откуда → куда | Эндпоинт | Зачем | Надёжность |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | order → payment | `POST /internal/v1/payments` | создать платёж, получить `paymentUrl` | таймаут 2 с, 3 повтора на 5xx/сеть, circuit breaker (5 ошибок → пауза 15 с), `Idempotency-Key = orderId` |
+| 2 | dispatch → order | `GET /internal/v1/orders/{id}/status` | перед назначением курьера убедиться, что заказ не отменён | таймаут, повторы; при недоступности назначение откладывается |
+| 3 | dispatch → order | `POST /internal/v1/orders/{id}/delivered` | курьер доставил заказ | таймаут, повторы; курьер освобождается только после подтверждения |
+
+**Асинхронные (Kafka):**
+
+| Топик | Событие | Издатель | Подписчики |
+| :--- | :--- | :--- | :--- |
+| `orders.events` | `order.created` | order | dispatch (копия адреса забора) |
+| `orders.events` | `order.delivered` | order | notification |
+| `payments.events` | `payment.completed` | payment | order (→ `PAID`), dispatch (старт поиска) |
+| `payments.events` | `payment.failed` | payment | order (→ `CANCELLED`) |
+| `payments.events` | `payment.refunded` | payment | — (для аудита) |
+| `dispatch.events` | `dispatch.courier_assigned` | dispatch | order (→ `ASSIGNED`), notification |
+| `dispatch.events` | `dispatch.search_failed` | dispatch | order (→ `CANCELLED`), **payment (возврат)**, notification |
+
+Гарантии: ключ сообщения = `orderId` (порядок в пределах заказа), offset коммитится после успешной обработки (at-least-once), дубли отсекаются по `eventId`, 5 неудачных попыток → `<топик>.dlq`. Если событие пришло раньше, чем к нему готов сервис (например, `courier_assigned` раньше `payment.completed`), обработчик возвращает ошибку и событие перечитывается.
+
+### Сага «оформление заказа»
+
+```
+order: заказ PENDING_PAYMENT ──REST──▶ payment: платёж + ссылка банка
+клиент платит ──▶ bank-mock ──вебхук через gateway──▶ payment ──payment.completed──▶ order: PAID
+                                                                         └──────────▶ dispatch: поиск курьера
+dispatch ──REST: статус заказа──▶ order;  курьер найден ──courier_assigned──▶ order: ASSIGNED, notification: SMS
+курьер ──▶ dispatch ──REST: delivered──▶ order: DELIVERED ──order.delivered──▶ notification: SMS
+```
+
+Компенсации:
+
+| Сбой | Что происходит |
+| :--- | :--- |
+| payment-service недоступен при создании заказа | заказ `CANCELLED` (`PAYMENT_SERVICE_UNAVAILABLE`), клиенту 503 |
+| банк отклонил оплату | `payment.failed` → заказ `CANCELLED` (`PAYMENT_FAILED`), поиск курьера не начинается |
+| курьер не найден за `SEARCH_TIMEOUT` | `dispatch.search_failed` → заказ `CANCELLED` (`COURIER_NOT_FOUND`), payment возвращает деньги, клиенту SMS |
+| банк недоступен при возврате | обработчик возвращает ошибку → Kafka доставляет событие повторно, платёж остаётся `COMPLETED` |
+| order-service недоступен для dispatch | назначение/завершение доставки откладывается, повторяется позже |
+| повторная доставка события / повторный вебхук | игнорируется (дедупликация по `eventId` и по статусу) |
+
+## Что через моки, а что — реальное
+
+| Компонент / взаимодействие | Как реализовано |
+| :--- | :--- |
+| 4 бизнес-сервиса, REST-вызовы между ними | **реальные**, отдельные контейнеры, настоящий HTTP |
+| Брокер сообщений | **реальная Kafka** в docker-compose (в unit- и e2e-тестах — in-memory шина с тем же интерфейсом) |
+| API Gateway | **реальный Nginx** (без проверки JWT — см. ниже) |
+| Платёжный шлюз банка | **мок** `mocks/bank-mock` (HTTP-сервис: сессии оплаты, подписанный вебхук, возвраты; `FAIL_REFUNDS=true` — сбой возвратов) |
+| SMS-провайдер | **мок** внутри notification-service (пишет SMS в лог; `SMS_FAIL=true` — провайдер недоступен) |
+| Геокодер адресов | **мок** внутри dispatch-service (адрес детерминированно отображается в точку в Ростове-на-Дону) |
+| Хранилища (PostgreSQL, Redis в ЛР3) | **in-memory** у каждого сервиса своё (разрешено условием ЛР4); доступ через отдельный `store.go`, поэтому замена на БД затрагивает один файл. TTL координат курьеров (60 с) повторяет поведение Redis |
+| Авторизация (Keycloak) | не реализована; клиент передаёт `X-Client-Id`, в продакшене его проставлял бы gateway из JWT |
+| Prometheus + Grafana | не реализованы (не требуются ЛР4); вместо метрик — структурированные JSON-логи с `requestId` |
+
+## Запуск
+
+Нужны Docker Desktop и (для тестов) Go 1.22+.
+
+```powershell
+docker compose up -d --build     # вся система; первая сборка ~3-5 минут
+docker compose ps                # все Up/healthy, kafka-init — Exited (0)
+```
+
+* API Gateway: http://localhost:8080
+* Kafka UI: http://localhost:8090
+* Логи сервиса: `docker logs -f order-service`
+* Остановка: `docker compose down`
+
+Демонстрационные параметры (переменные окружения хоста):
+
+| Переменная | По умолчанию | Смысл |
+| :--- | :--- | :--- |
+| `SEARCH_TIMEOUT` | `20s` | сколько ищем курьера (по ТЗ — `15m`, для демонстрации уменьшено) |
+| `SMS_FAIL` | `false` | SMS-провайдер «лежит» |
+| `FAIL_REFUNDS` | `false` | банк не может сделать возврат |
+
+Пример: `$env:FAIL_REFUNDS="true"; docker compose up -d bank-mock`.
+
+Без Docker каждый сервис можно запустить отдельно: `go run ./services/order-service` (тогда используется in-memory брокер; для Kafka задать `KAFKA_BROKERS=localhost:9092`).
+
+## Проверка
+
+**Тесты Go** (59 тестов):
+
+```powershell
+go test ./...
+```
+
+| Пакет | Тестов | Что проверяется |
+| :--- | :---: | :--- |
+| `payment-service/app` | 12 | валидация, подпись вебхука, идемпотентность, возвраты, реакция на `search_failed`, эндпоинты |
+| `order-service/app` | 20 | цена, валидация, конечный автомат, сага на событиях, порядок событий, HTTP-клиент к payment против мок-сервера (контракт, повторы, circuit breaker), пагинация |
+| `dispatch-service/app` | 17 | расстояния, подбор ближайшего, TTL координат, отсутствие двойного назначения (конкурентно), таймаут → `search_failed`, недоступность order, HTTP-клиент к order |
+| `notification-service/app` | 6 | тексты SMS, дедупликация, сбой провайдера, журнал с пагинацией |
+| `tests/e2e` | 4 | **сквозные тесты саги**: три сервиса по настоящему HTTP + общий брокер: успех, курьер не найден, отказ банка, payment недоступен |
+
+**Живая проверка** работающей системы (PowerShell-скрипты в `scripts/`, выводят PASS/FAIL):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\test-gateway.ps1
+powershell -ExecutionPolicy Bypass -File scripts\test-saga.ps1 -Order http://localhost:8080 -Dispatch http://localhost:8080
+```
+
+`test-payment.ps1`, `test-order.ps1`, `test-kafka.ps1` — проверки отдельных сервисов при запуске через `go run`.
+
+**Postman:** коллекция `postman/delivery-lab4.postman_collection.json` — сценарии по шагам, переменные (`orderId`, `paymentUrl`, …) заполняются автоматически.
+
+Подробное описание проверенных сценариев — [docs/demo-scenarios.md](docs/demo-scenarios.md).
+
+## Изменения относительно ЛР3
+
+* Синхронные вызовы — **REST вместо gRPC**: контракты в `api/*.yaml` изначально описаны как REST, а gRPC потребовал бы отдельных proto-контрактов.
+* Добавлены 2 синхронных взаимодействия dispatch → order (требование ЛР4 — не менее 3): `GET /internal/v1/orders/{id}/status` (был в спецификации) и новый `POST /internal/v1/orders/{id}/delivered` — заодно закрыт пробел «как заказ становится `DELIVERED`».
+* Новые эндпоинты: `POST /api/v1/couriers/{courierId}/assignment/complete`, `GET /internal/v1/payments/{paymentId}`, фильтр `orderId` в журнале уведомлений.
+* Описана схема события `payment.failed` и обработка отказа оплаты.
+* dispatch-service подписан на `order.created` и хранит копию адреса забора (владелец данных — order-service).
+* Статус нового заказа — `PENDING_PAYMENT` (как в спецификации).
+* Спецификации в `api/` дополнены (новые эндпоинты, коды 409/503, поля заказа `price`, `courierId`, `cancelReason`).
+
+## Структура репозитория
+
+```
+api/                   OpenAPI-спецификации (ЛР3, дополнены в ЛР4)
+docs/                  схемы (ЛР3) и demo-scenarios.md
+pkg/                   общий код сервисов
+services/<name>/       main.go + app/ (model, store, service, handlers, клиенты, тесты)
+mocks/bank-mock/       заглушка платёжного шлюза
+gateway/nginx.conf     API Gateway
+tests/e2e/             сквозные тесты саги
+scripts/               PowerShell-скрипты живой проверки
+postman/               Postman-коллекция
+Dockerfile, docker-compose.yml
+```
+
+---
+
 # Лабораторная работа №3. Декомпозиция и проектирование микросервисной системы
 
 ## Шаг 1. Анализ предметной области
@@ -34,7 +210,7 @@
 * **Заказ** — заявка на доставку с адресами отправителя и получателя, габаритами и текущим статусом жизненного цикла.
 * **Клиент** — пользователь системы, выступающий заказчиком услуги доставки.
 * **Посылка** — физический объект доставки, обладающий весом и габаритами.
-* **Статус заказа** — состояние заявки (`PENDING`, `PAID`, `ASSIGNED`, `DELIVERED`, `CANCELLED`).
+* **Статус заказа** — состояние заявки (`PENDING_PAYMENT`, `PAID`, `ASSIGNED`, `DELIVERED`, `CANCELLED`).
 
 #### 2. Контекст Диспетчеризации (Dispatch & Couriers)
 * **Курьер** — исполнитель со статусом занятости (свободен/занят) и текущей геопозицией.
@@ -57,7 +233,7 @@
 * **Ответственность:** Управление жизненным циклом заказа на доставку, валидация адресов, хранение истории.
 * **Владеет данными:** `Заказ`, `Отправитель`, `ПараметрыПосылки`.
 * **Предоставляет:** Синхронный REST API для создания/получения заказа; публикует события `order.created`, `order.delivered`.
-* **Зависит от:** Синхронного gRPC-вызова к `payment-service` (создание платежа); событий `payment.completed`, `payment.failed`, `dispatch.courier_assigned`, `dispatch.search_failed`.
+* **Зависит от:** Синхронного REST-вызова к `payment-service` (создание платежа); событий `payment.completed`, `payment.failed`, `dispatch.courier_assigned`, `dispatch.search_failed`.
 * **Нефункциональные требования:** Высокая доступность на чтение (клиенты регулярно опрашивают статус заказа).
 * **Обоснование границы:** Ядро бизнес-логики с собственной конечной машиной состояний (state machine), отделенное от логики исполнителей и платежей.
 
@@ -72,7 +248,7 @@
 #### 3. `payment-service`
 * **Ответственность:** Создание платежных сессий, прием вебхуков от банка, проведение возвратов при срыве заказа.
 * **Владеет данными:** `Платёж`, `Возврат`, `Транзакция`.
-* **Предоставляет:** Синхронный gRPC API (`CreatePayment`) для генерации ссылки на оплату; публикует события `payment.completed`, `payment.failed`.
+* **Предоставляет:** Синхронный REST API (`POST /internal/v1/payments`) для генерации ссылки на оплату; публикует события `payment.completed`, `payment.failed`.
 * **Зависит от:** События `dispatch.search_failed` (инициирует автоматический возврат средств).
 * **Нефункциональные требования:** Строгая согласованность данных (ACID), повышенные требования к безопасности и аудиту.
 * **Обоснование границы:** Изоляция интеграции с внешним банковским шлюзом предотвращает каскадные сбои всей платформы при задержках на стороне банка.
@@ -92,7 +268,7 @@
 
 ## Шаг 3. Выбор готового ПО
 
-Разработка сервисов предполагается на языке **Golang** в связке с контейнеризацией через **Docker** (и развертыванием локально через `docker-compose`). Синхронное взаимодействие между внутренними сервисами реализовано по **gRPC**, а внешнее API для клиентов — по **REST (HTTP)**.
+Разработка сервисов предполагается на языке **Golang** в связке с контейнеризацией через **Docker** (и развертыванием локально через `docker-compose`). Синхронное взаимодействие между внутренними сервисами реализовано по **REST (HTTP/JSON)** (в проекте изначально планировался gRPC — см. «Изменения относительно ЛР3»), а внешнее API для клиентов — по **REST (HTTP)**.
 
 | Компонент | Кто использует | Обоснование |
 | :--- | :--- | :--- |
@@ -116,7 +292,7 @@
 | 1 | Клиент $\rightarrow$ Nginx Gateway | sync | HTTP REST: `POST /api/v1/orders` | Передача данных заказа (адреса, посылка) |
 | 2 | Nginx $\rightarrow$ `order-service` | sync | HTTP REST: `POST /api/v1/orders` | Проксирование создания заказа |
 | 3 | Курьер $\rightarrow$ Nginx $\rightarrow$ `dispatch-service` | sync | HTTP REST: `POST /api/v1/couriers/shifts` | Выход курьера на смену, отправка координат |
-| 4 | `order-service` $\rightarrow$ `payment-service` | sync | **gRPC:** `CreatePayment` | Создание платежа, получение paymentUrl |
+| 4 | `order-service` $\rightarrow$ `payment-service` | sync | HTTP REST: `POST /internal/v1/payments` | Создание платежа, получение paymentUrl |
 | 5 | Клиент $\rightarrow$ `payment-service` / Шлюз | sync | HTTPS | Оплата заказа картой через шлюз |
 | 6 | `payment-service` $\rightarrow$ Kafka | async | Топик `payments.events`: `payment.completed` | Оповещение об успешной оплате |
 | 7 | Kafka $\rightarrow$ `order-service` | async | Подписка: `payment.completed` | Смена статуса заказа на `PAID` |
@@ -138,7 +314,7 @@
 ![Сценарий со сбоем](docs/sequence-fail.png)
 
 ### Механизм согласованности данных и обработка сбоев (Сага)
-1. **Успешный путь:** Заказ создается в статусе `PENDING`. После оплаты через шлюз `payment-service` отправляет событие `payment.completed`. Сервис заказов переводит статус в `PAID`, а `dispatch-service` начинает поиск исполнителя в Redis. При нахождении публикуется `dispatch.courier_assigned`, заказ переходит в `ASSIGNED`, клиенту уходит SMS.
+1. **Успешный путь:** Заказ создается в статусе `PENDING_PAYMENT`. После оплаты через шлюз `payment-service` отправляет событие `payment.completed`. Сервис заказов переводит статус в `PAID`, а `dispatch-service` начинает поиск исполнителя в Redis. При нахождении публикуется `dispatch.courier_assigned`, заказ переходит в `ASSIGNED`, клиенту уходит SMS.
 2. **Сценарий сбоя и компенсация:** Если за 15 минут свободный курьер не найден, `dispatch-service` генерирует событие `dispatch.search_failed`. Это запускает цепочку распределенного отката:
    * `order-service` переводит статус заказа в `CANCELLED`.
    * `payment-service` выполняет компенсирующее действие — вызывает метод возврата средств (Refund) во внешнем платёжном шлюзе.

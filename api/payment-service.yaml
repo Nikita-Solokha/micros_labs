@@ -41,6 +41,24 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PaymentResponse'
+        '200':
+          description: Для заказа уже есть платёж — возвращается существующий (идемпотентность по orderId)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentResponse'
+        '409':
+          description: Idempotency-Key уже использован с другим телом запроса
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: Платёжный шлюз недоступен
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
         '400':
           description: Ошибка валидации параметров
           content:
@@ -125,6 +143,50 @@ paths:
             application/problem+json:
               schema:
                 $ref: '#/components/schemas/Problem'
+        '409':
+          description: Вернуть можно только оплаченный (COMPLETED) платёж
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '503':
+          description: Платёжный шлюз недоступен — возврат будет повторён
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /internal/v1/payments/{paymentId}:
+    get:
+      tags: [internal]
+      summary: Получить состояние платежа (ЛР4, для проверки компенсации)
+      parameters:
+        - in: path
+          name: paymentId
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Платёж
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paymentId: { type: string, format: uuid }
+                  orderId: { type: string, format: uuid }
+                  amount: { type: number }
+                  status: { type: string, enum: [PENDING, COMPLETED, FAILED, REFUNDED] }
+                  paymentUrl: { type: string, format: uri }
+                  refundId: { type: string }
+        '404':
+          description: Платеж не найден
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
 components:
   schemas:
@@ -189,6 +251,24 @@ components:
             paymentId: { type: string, format: uuid }
             orderId: { type: string, format: uuid }
             amount: { type: number, format: float, example: 450.00 }
+
+    PaymentFailedEvent:
+      type: object
+      description: "Топик: payments.events | Издатель: payment-service | Подписчики: order-service (ЛР4)"
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
+      properties:
+        eventId: { type: string, format: uuid }
+        eventType: { type: string, example: "payment.failed" }
+        schemaVersion: { type: integer, example: 1 }
+        occurredAt: { type: string, format: date-time }
+        correlationId: { type: string, format: uuid, description: "orderId" }
+        payload:
+          type: object
+          required: [paymentId, orderId, reason]
+          properties:
+            paymentId: { type: string, format: uuid }
+            orderId: { type: string, format: uuid }
+            reason: { type: string, example: "DECLINED_BY_BANK" }
 
     PaymentRefundedEvent:
       type: object

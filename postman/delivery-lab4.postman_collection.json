@@ -1,0 +1,975 @@
+{
+  "info": {
+    "name": "Delivery — ЛР4 (микросервисы)",
+    "description": "Демонстрация лабораторной работы №4. Перед запуском: docker compose up -d --build.\nПапки запускаются через Run collection / Run folder по порядку — переменные (orderId, paymentUrl, ...) заполняются автоматически.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "gw",
+      "value": "http://localhost:8080"
+    },
+    {
+      "key": "payment",
+      "value": "http://localhost:8083"
+    },
+    {
+      "key": "notify",
+      "value": "http://localhost:8084"
+    },
+    {
+      "key": "courierId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "paymentId",
+      "value": ""
+    },
+    {
+      "key": "paymentUrl",
+      "value": ""
+    },
+    {
+      "key": "idemKey",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Успешный сценарий (happy path)",
+      "item": [
+        {
+          "name": "1. Курьер выходит на смену",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/couriers/shifts"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"courierId\": \"{{courierId}}\",\n  \"action\": \"START_SHIFT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"courierId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = ONLINE\", () => pm.expect(pm.response.json().status).to.eql(\"ONLINE\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Курьер передаёт координаты (центр Ростова)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/dispatch/location"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"courierId\": \"{{courierId}}\",\n  \"lat\": 47.2357,\n  \"lon\": 39.7015,\n  \"status\": \"ONLINE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Клиент создаёт заказ (order → payment, REST)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Client-Id",
+                "value": "client-demo"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const o = pm.response.json();",
+                  "pm.collectionVariables.set(\"orderId\", o.id);",
+                  "pm.collectionVariables.set(\"paymentId\", o.paymentId);",
+                  "pm.collectionVariables.set(\"paymentUrl\", o.paymentUrl);",
+                  "pm.test(\"status = PENDING_PAYMENT\", () => pm.expect(o.status).to.eql(\"PENDING_PAYMENT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Повтор с тем же Idempotency-Key — тот же заказ",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Client-Id",
+                "value": "client-demo"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"тот же orderId\", () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get(\"orderId\")));",
+                  "pm.test(\"Idempotent-Replayed\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replayed\")).to.eql(\"true\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Клиент оплачивает (банк-заглушка → вебхук через gateway)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"оплата успешна\", () => pm.expect(pm.response.text()).to.include(\"SUCCESS\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. Заказ ASSIGNED (payment.completed → dispatch → courier_assigned)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 1500); // события асинхронные — даём Kafka время"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = ASSIGNED\", () => pm.expect(pm.response.json().status).to.eql(\"ASSIGNED\"));",
+                  "pm.test(\"назначен наш курьер\", () => pm.expect(pm.response.json().courierId).to.eql(pm.collectionVariables.get(\"courierId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "7. Курьер видит назначение",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"orderId совпадает\", () => pm.expect(pm.response.json().orderId).to.eql(pm.collectionVariables.get(\"orderId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "8. Курьер отмечает доставку (dispatch → order, REST)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment/complete"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "9. Заказ DELIVERED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = DELIVERED\", () => pm.expect(pm.response.json().status).to.eql(\"DELIVERED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "10. SMS клиенту (internal, напрямую в notification-service)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 1000); // события асинхронные — даём Kafka время"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"2 SMS: назначен и доставлен\", () => pm.expect(pm.response.json().total).to.eql(2));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "11. Курьер закрывает смену",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/couriers/shifts"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"courierId\": \"{{courierId}}\",\n  \"action\": \"END_SHIFT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = OFFLINE\", () => pm.expect(pm.response.json().status).to.eql(\"OFFLINE\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Сбой: банк отклонил оплату",
+      "item": [
+        {
+          "name": "1. Создать заказ",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const o = pm.response.json();",
+                  "pm.collectionVariables.set(\"orderId\", o.id);",
+                  "pm.collectionVariables.set(\"paymentId\", o.paymentId);",
+                  "pm.collectionVariables.set(\"paymentUrl\", o.paymentUrl);",
+                  "pm.test(\"status = PENDING_PAYMENT\", () => pm.expect(o.status).to.eql(\"PENDING_PAYMENT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Банк отклоняет оплату (?result=fail)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}?result=fail"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"оплата отклонена\", () => pm.expect(pm.response.text()).to.include(\"FAILED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Заказ CANCELLED (payment.failed)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 1500); // события асинхронные — даём Kafka время"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = CANCELLED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));",
+                  "pm.test(\"cancelReason = PAYMENT_FAILED\", () => pm.expect(pm.response.json().cancelReason).to.eql(\"PAYMENT_FAILED\"));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Сбой: курьер не найден → отмена и возврат (сага)",
+      "item": [
+        {
+          "name": "1. Создать заказ (курьеров на смене нет)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"idemKey\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 201\", () => pm.response.to.have.status(201));",
+                  "const o = pm.response.json();",
+                  "pm.collectionVariables.set(\"orderId\", o.id);",
+                  "pm.collectionVariables.set(\"paymentId\", o.paymentId);",
+                  "pm.collectionVariables.set(\"paymentUrl\", o.paymentUrl);",
+                  "pm.test(\"status = PENDING_PAYMENT\", () => pm.expect(o.status).to.eql(\"PENDING_PAYMENT\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Оплатить",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{paymentUrl}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Заказ PAID, идёт поиск курьера",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 1500); // события асинхронные — даём Kafka время"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = PAID\", () => pm.expect(pm.response.json().status).to.eql(\"PAID\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Через SEARCH_TIMEOUT (20 с) — заказ CANCELLED",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+            },
+            "description": "Запрос ждёт 25 секунд перед отправкой: dispatch-service публикует dispatch.search_failed по таймауту."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "setTimeout(() => {}, 25000); // события асинхронные — даём Kafka время"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = CANCELLED\", () => pm.expect(pm.response.json().status).to.eql(\"CANCELLED\"));",
+                  "pm.test(\"cancelReason = COURIER_NOT_FOUND\", () => pm.expect(pm.response.json().cancelReason).to.eql(\"COURIER_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Компенсация: платёж REFUNDED (internal, напрямую в payment-service)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{payment}}/internal/v1/payments/{{paymentId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status = REFUNDED\", () => pm.expect(pm.response.json().status).to.eql(\"REFUNDED\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "6. SMS об отмене",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"1 SMS\", () => pm.expect(pm.response.json().total).to.eql(1));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Ошибки и контракт",
+      "item": [
+        {
+          "name": "Без Idempotency-Key → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Неверный вес → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": -1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Тот же ключ, другое тело → 409",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "description": "Использует idemKey последнего созданного заказа.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(409); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Несуществующий заказ → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders/00000000-0000-4000-8000-000000000000"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Пагинация size=500 → 400",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders?page=1&size=500"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Internal-эндпоинт через gateway → 404",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/internal/v1/orders/{{orderId}}/status"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(404); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Неверные координаты → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/dispatch/location"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"courierId\": \"x\",\n  \"lat\": 95,\n  \"lon\": 0,\n  \"status\": \"ONLINE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Поддельный вебхук банка → 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/payments/webhook"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentId\": \"{{paymentId}}\",\n  \"status\": \"SUCCESS\",\n  \"signature\": \"fake\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
