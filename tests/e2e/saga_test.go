@@ -19,6 +19,7 @@ import (
 	"github.com/Nikita-Solokha/micros_labs/pkg/idempotency"
 	"github.com/Nikita-Solokha/micros_labs/pkg/webhook"
 	dispatch "github.com/Nikita-Solokha/micros_labs/services/dispatch-service/app"
+	notification "github.com/Nikita-Solokha/micros_labs/services/notification-service/app"
 	order "github.com/Nikita-Solokha/micros_labs/services/order-service/app"
 	payment "github.com/Nikita-Solokha/micros_labs/services/payment-service/app"
 )
@@ -40,6 +41,7 @@ type system struct {
 	bank     *bank
 	pay      *payment.Service
 	disp     *dispatch.Service
+	notif    *notification.Service
 	payURL   string
 	orderURL string
 	dispURL  string
@@ -73,6 +75,11 @@ func start(t *testing.T, searchTimeout time.Duration) *system {
 	}
 	dispSrv := httptest.NewServer(httpx.Middleware(log, dispatch.Routes(disp)))
 
+	notif := &notification.Service{
+		Store: &notification.Store{}, SMS: &notification.MockSMS{Log: log},
+		Processed: idempotency.NewProcessed(), Log: log,
+	}
+
 	// подписки — как в main.go каждого сервиса
 	bus.Subscribe(events.TopicDispatch, "payment-service", func(ctx context.Context, e events.Envelope) error {
 		if e.EventType != events.CourierSearchFail {
@@ -84,12 +91,14 @@ func start(t *testing.T, searchTimeout time.Duration) *system {
 	bus.Subscribe(events.TopicDispatch, "order-service", ord.HandleEvent)
 	bus.Subscribe(events.TopicOrders, "dispatch-service", disp.HandleEvent)
 	bus.Subscribe(events.TopicPayments, "dispatch-service", disp.HandleEvent)
+	bus.Subscribe(events.TopicDispatch, "notification-service", notif.HandleEvent)
+	bus.Subscribe(events.TopicOrders, "notification-service", notif.HandleEvent)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go disp.Run(ctx)
 
 	return &system{
-		bus: bus, bank: b, pay: pay, disp: disp,
+		bus: bus, bank: b, pay: pay, disp: disp, notif: notif,
 		payURL: paySrv.URL, orderURL: ordSrv.URL, dispURL: dispSrv.URL,
 		close: func() { cancel(); bus.Wait(); dispSrv.Close(); ordSrv.Close(); paySrv.Close() },
 	}
@@ -185,6 +194,35 @@ func TestSaga_HappyPath(t *testing.T) {
 	if s.bank.refunds != 0 {
 		t.Fatal("в успешном сценарии возвратов быть не должно")
 	}
+	s.waitSMS(t, orderID, events.CourierAssigned, events.OrderDelivered)
+}
+
+// waitSMS ждёт, пока notification-service отправит SMS на указанные события.
+func (s *system) waitSMS(t *testing.T, orderID string, types ...string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	var got []string
+	for time.Now().Before(deadline) {
+		resp, _ := s.notif.Logs(orderID, 1, 50)
+		got = got[:0]
+		for _, it := range resp.Items {
+			got = append(got, it.EventType)
+		}
+		if len(got) == len(types) {
+			for _, want := range types {
+				found := false
+				for _, g := range got {
+					found = found || g == want
+				}
+				if !found {
+					t.Fatalf("нет SMS на %s, отправлены: %v", want, got)
+				}
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("ожидались SMS на %v, отправлены: %v", types, got)
 }
 
 // Сбой: курьер не найден за SearchTimeout -> компенсации: заказ отменён, деньги возвращены.
@@ -206,6 +244,7 @@ func TestSaga_CourierNotFound_Compensation(t *testing.T) {
 			if s.bank.refunds != 1 {
 				t.Fatalf("возврат должен быть ровно один, было %d", s.bank.refunds)
 			}
+			s.waitSMS(t, orderID, events.CourierSearchFail)
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
