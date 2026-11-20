@@ -256,3 +256,18 @@ func TestHTTP_WebhookAndRefund(t *testing.T) {
 		t.Fatalf("несуществующий платёж: ожидался 404, получили %d", nf.Code)
 	}
 }
+
+func TestHTTP_GetPayment(t *testing.T) {
+	s, _, _ := newTestService()
+	h := Routes(s, idempotency.NewStore())
+	p := paid(t, s)
+	rec := doJSON(t, h, "GET", "/internal/v1/payments/"+p.ID, nil, nil)
+	var got Payment
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if rec.Code != 200 || got.Status != StatusCompleted || got.OrderID != "order-1" {
+		t.Fatalf("GET платежа: %d %+v", rec.Code, got)
+	}
+	if rec := doJSON(t, h, "GET", "/internal/v1/payments/nope", nil, nil); rec.Code != 404 {
+		t.Fatalf("несуществующий платёж: ожидался 404, получили %d", rec.Code)
+	}
+}

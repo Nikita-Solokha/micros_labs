@@ -16,6 +16,7 @@ func Routes(s *Service, idem *idempotency.Store) http.Handler {
 	mux.Handle("POST /internal/v1/payments", idem.Middleware(http.HandlerFunc(s.handleCreate)))
 	mux.HandleFunc("POST /api/v1/payments/webhook", s.handleWebhook)
 	mux.HandleFunc("POST /internal/v1/payments/{paymentId}/refund", s.handleRefund)
+	mux.HandleFunc("GET /internal/v1/payments/{paymentId}", s.handleGet)
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "UP"})
 	})
@@ -66,6 +67,16 @@ func (s *Service) handleRefund(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, RefundResponse{RefundID: pay.RefundID, Status: pay.Status})
+}
+
+// handleGet — текущее состояние платежа (нужно для проверки возврата в саге).
+func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.Store.Get(r.PathValue("paymentId"))
+	if !ok {
+		problem.Write(w, r, problem.NotFound(ErrNotFound.Error()))
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, p)
 }
 
 // writeErr переводит ошибки бизнес-логики в HTTP-коды и Problem Details.
