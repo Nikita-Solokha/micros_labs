@@ -69,6 +69,10 @@ func (b *MemoryBus) deliver(topic, group string, h Handler, e Envelope) {
 	b.log.Error("event moved to DLQ", "topic", topic, "group", group, "eventId", e.EventID)
 }
 
+// Start и Close нужны для интерфейса Bus; в памяти запускать нечего.
+func (b *MemoryBus) Start(context.Context) {}
+func (b *MemoryBus) Close() error          { b.wg.Wait(); return nil }
+
 // Wait ждёт, пока все отправленные события будут обработаны (нужно в тестах).
 func (b *MemoryBus) Wait() { b.wg.Wait() }
 

@@ -6,6 +6,9 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/Nikita-Solokha/micros_labs/pkg/httpx"
@@ -77,7 +80,21 @@ type Subscriber interface {
 }
 
 // Bus — брокер, который умеет и публиковать, и подписывать.
+// Start запускает чтение подписок, Close — освобождает ресурсы.
 type Bus interface {
 	Publisher
 	Subscriber
+	Start(ctx context.Context)
+	Close() error
+}
+
+// FromEnv выбирает брокер по переменной окружения KAFKA_BROKERS:
+// задана (например localhost:9092) — Kafka, не задана — in-memory шина.
+func FromEnv(log *slog.Logger) Bus {
+	if brokers := os.Getenv("KAFKA_BROKERS"); brokers != "" {
+		log.Info("using Kafka", "brokers", brokers)
+		return NewKafkaBus(strings.Split(brokers, ","), log)
+	}
+	log.Warn("KAFKA_BROKERS not set, using in-memory bus (events stay inside this process)")
+	return NewMemoryBus(log)
 }

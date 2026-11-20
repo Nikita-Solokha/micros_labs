@@ -29,8 +29,8 @@ func main() {
 
 	port := env("PORT", "8083")
 
-	// Брокер: пока in-memory. На шаге с docker-compose подключим Kafka.
-	bus := events.NewMemoryBus(log)
+	// Брокер: Kafka, если задан KAFKA_BROKERS, иначе in-memory.
+	bus := events.FromEnv(log)
 
 	svc := &app.Service{
 		Store:         app.NewStore(),
@@ -59,6 +59,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	bus.Start(ctx) // начинаем читать подписки
+
 	go func() {
 		log.Info("listening", "port", port)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -72,4 +74,5 @@ func main() {
 	shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shCtx)
+	_ = bus.Close()
 }
