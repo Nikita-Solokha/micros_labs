@@ -1,6 +1,6 @@
 module github.com/Nikita-Solokha/micros_labs
 
-go 1.27.4
+go 1.24
 
 require github.com/segmentio/kafka-go v0.4.51
 

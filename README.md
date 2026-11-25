@@ -25,6 +25,37 @@
 | `bank-mock` | 9090 | Заглушка внешнего платёжного шлюза |
 | Kafka / Kafka UI | 9092 / 8090 | Брокер событий и веб-интерфейс к нему |
 
+Архитектура реализованной системы (схемы в `docs/*.png` — проектные, из ЛР3: там ещё gRPC, PostgreSQL/Redis и Prometheus):
+
+```mermaid
+flowchart TB
+    client([Клиент: браузер / Postman])
+    bank[[bank-mock :9090<br/>заглушка банка]]
+    gw[API Gateway · Nginx :8080]
+    order[order-service :8081]
+    payment[payment-service :8083]
+    dispatch[dispatch-service :8082]
+    notif[notification-service :8084<br/>мок SMS]
+    kafka[(Kafka<br/>orders / payments / dispatch .events)]
+
+    client -->|все запросы| gw
+    client -.->|оплата по ссылке| bank
+    bank -->|вебхук| gw
+    gw -->|/api/v1/orders| order
+    gw -->|/api/v1/couriers, /dispatch| dispatch
+    gw -->|/api/v1/payments/webhook| payment
+    order -->|REST: создать платёж| payment
+    payment -->|REST: сессия, возврат| bank
+    dispatch -->|REST: статус заказа| order
+    dispatch -->|REST: заказ доставлен| order
+    order <-.->|события| kafka
+    payment <-.->|события| kafka
+    dispatch <-.->|события| kafka
+    kafka -.->|события| notif
+```
+
+Сплошные стрелки — синхронные HTTP-вызовы, пунктир — асинхронные события через Kafka.
+
 Все 4 бизнес-сервиса из ЛР3 реализованы. Общий код — в `pkg/`:
 
 * `pkg/problem` — **единая модель ошибок** RFC 7807 (`application/problem+json`: `type`, `title`, `status`, `detail`, `instance`) во всех сервисах и в gateway;
@@ -94,7 +125,7 @@ dispatch ──REST: статус заказа──▶ order;  курьер н�
 
 ## Запуск
 
-Нужны Docker Desktop и (для тестов) Go 1.22+.
+Нужны Docker Desktop и (для тестов) Go 1.24+.
 
 ```powershell
 docker compose up -d --build     # вся система; первая сборка ~3-5 минут

@@ -206,7 +206,7 @@ components:
     CourierAssignedEvent:
       type: object
       description: "Топик: dispatch.events | Издатель: dispatch-service | Подписчики: order-service, notification-service"
-      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
       properties:
         eventId:
           type: string
@@ -222,6 +222,10 @@ components:
           type: string
           format: date-time
           example: "2026-10-30T10:06:15Z"
+        correlationId:
+          type: string
+          format: uuid
+          description: "orderId — связывает все события одного заказа (шаги саги)"
         payload:
           type: object
           required: [orderId, courierId]
@@ -232,7 +236,7 @@ components:
     SearchFailedEvent:
       type: object
       description: "Топик: dispatch.events | Издатель: dispatch-service | Подписчики: order-service, payment-service, notification-service"
-      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
       properties:
         eventId:
           type: string
@@ -248,6 +252,10 @@ components:
           type: string
           format: date-time
           example: "2026-10-30T10:20:00Z"
+        correlationId:
+          type: string
+          format: uuid
+          description: "orderId — связывает все события одного заказа (шаги саги)"
         payload:
           type: object
           required: [orderId, reason]

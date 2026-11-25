@@ -289,8 +289,8 @@ components:
     # --- Асинхронные события Kafka (Топик: orders.events, Издатель: order-service) ---
     OrderCreatedEvent:
       type: object
-      description: "Топик: orders.events | Издатель: order-service | Подписчики: notification-service"
-      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      description: "Топик: orders.events | Издатель: order-service | Подписчики: dispatch-service (сохраняет адрес забора)"
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
       properties:
         eventId:
           type: string
@@ -306,13 +306,17 @@ components:
           type: string
           format: date-time
           example: "2026-10-30T10:00:01Z"
+        correlationId:
+          type: string
+          format: uuid
+          description: "orderId — связывает все события одного заказа (шаги саги)"
         payload:
           $ref: '#/components/schemas/Order'
 
     OrderDeliveredEvent:
       type: object
       description: "Топик: orders.events | Издатель: order-service | Подписчики: notification-service"
-      required: [eventId, eventType, schemaVersion, occurredAt, payload]
+      required: [eventId, eventType, schemaVersion, occurredAt, correlationId, payload]
       properties:
         eventId:
           type: string
@@ -328,9 +332,14 @@ components:
           type: string
           format: date-time
           example: "2026-10-30T11:30:00Z"
+        correlationId:
+          type: string
+          format: uuid
+          description: "orderId — связывает все события одного заказа (шаги саги)"
         payload:
           type: object
-          required: [orderId, deliveredAt]
+          required: [orderId, courierId, deliveredAt]
           properties:
             orderId: { type: string, format: uuid }
+            courierId: { type: string }
             deliveredAt: { type: string, format: date-time }

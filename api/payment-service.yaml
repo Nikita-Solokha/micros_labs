@@ -272,7 +272,7 @@ components:
 
     PaymentRefundedEvent:
       type: object
-      description: "Топик: payments.events | Издатель: payment-service | Подписчики: notification-service, order-service"
+      description: "Топик: payments.events | Издатель: payment-service | Подписчики: нет (событие для аудита; в ЛР4 никто не подписан)"
       required: [eventId, eventType, schemaVersion, occurredAt, payload]
       properties:
         eventId:
