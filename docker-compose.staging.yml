@@ -1,0 +1,17 @@
+# Staging-окружение для CD (ЛР5): те же сервисы, что в docker-compose.yml,
+# но из образов, опубликованных пайплайном в GitHub Container Registry, а не из исходников.
+#
+#   REGISTRY=ghcr.io/<owner> IMAGE_TAG=sha-<commit> \
+#     docker compose -f docker-compose.yml -f docker-compose.staging.yml up -d --no-build
+
+services:
+  order-service:
+    image: ${REGISTRY:?задайте REGISTRY}/delivery-order-service:${IMAGE_TAG:-latest}
+  dispatch-service:
+    image: ${REGISTRY:?задайте REGISTRY}/delivery-dispatch-service:${IMAGE_TAG:-latest}
+  payment-service:
+    image: ${REGISTRY:?задайте REGISTRY}/delivery-payment-service:${IMAGE_TAG:-latest}
+  notification-service:
+    image: ${REGISTRY:?задайте REGISTRY}/delivery-notification-service:${IMAGE_TAG:-latest}
+  bank-mock:
+    image: ${REGISTRY:?задайте REGISTRY}/delivery-bank-mock:${IMAGE_TAG:-latest}

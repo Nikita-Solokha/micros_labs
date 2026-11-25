@@ -1,3 +1,26 @@
+# Лабораторная работа №5. CI/CD
+
+[![CI/CD](https://github.com/Nikita-Solokha/micros_labs/actions/workflows/ci-cd.yml/badge.svg)](https://github.com/Nikita-Solokha/micros_labs/actions/workflows/ci-cd.yml)
+
+**Работающий пайплайн:** [Actions → CI/CD](https://github.com/Nikita-Solokha/micros_labs/actions/workflows/ci-cd.yml) · конфигурация: [`.github/workflows/ci-cd.yml`](.github/workflows/ci-cd.yml) · подробное описание, скриншоты и инструкции: [docs/cicd.md](docs/cicd.md).
+
+Платформа — **GitHub Actions** (репозиторий уже на GitHub, бесплатные раннеры с Docker, встроенный реестр GHCR и секрет `GITHUB_TOKEN`).
+
+| Этап | Что происходит |
+| :--- | :--- |
+| **checks** | `gofmt`, `go vet`, проверка OpenAPI-спецификаций по стандарту OpenAPI 3.1 |
+| **build** | `go build` каждого сервиса — матрица из 5 элементов (4 сервиса + bank-mock) по одному шаблону |
+| **test** | unit-тесты сервиса с `-race` и отчётом покрытия; отдельно — сквозные тесты саги (`tests/e2e`); отчёт об уязвимостях (`govulncheck`) |
+| **package** | сборка Docker-образа сервиса (кэш слоёв в GitHub Actions) |
+| **publish** (CD) | push образов в GitHub Container Registry `ghcr.io/nikita-solokha/delivery-<сервис>` с тегами `sha-<коммит>` и `latest` — только для `main` |
+| **deploy** (CD) | staging-окружение: `docker compose` поднимает всю систему **из опубликованных образов** прямо на раннере и прогоняет smoke-тест (20 проверок: успешный сценарий и сага с компенсацией) |
+
+Запуск: автоматически при **push в `main`** (CI + CD) и при **Pull Request** в `main` (только CI), вручную — кнопкой *Run workflow*. Секреты: только встроенный `GITHUB_TOKEN` с минимальными правами — в коде ключей нет.
+
+**Как проверить:** открыть [Actions](https://github.com/Nikita-Solokha/micros_labs/actions/workflows/ci-cd.yml) → последний прогон; образы — в разделе Packages; деплои — Environments → staging. Локально те же проверки: `gofmt -l .`, `go vet ./...`, `go test ./...`, а CD-часть — `docker compose up -d --build` и `scripts/test-saga.ps1` (подробно — [docs/cicd.md](docs/cicd.md#8-как-проверить-работу-пайплайна)).
+
+---
+
 # Лабораторная работа №4. Реализация микросервисов
 
 Реализация системы доставки посылок, спроектированной в [лабораторной работе №3](#лабораторная-работа-3-декомпозиция-и-проектирование-микросервисной-системы) (описание предметной области, архитектура и контракты — ниже в этом же файле).

@@ -1,0 +1,200 @@
+# CI/CD для системы доставки (ЛР5).
+#
+#   checks ──┬── service (матрица: 4 сервиса + bank-mock): build → unit-тесты → Docker-образ → [push в GHCR]
+#            ├── e2e: сквозные тесты саги
+#            └── security: поиск уязвимостей в зависимостях (отчёт)
+#   service + e2e ── deploy-staging (только main): docker compose из образов реестра + smoke-тест
+#
+# Секреты: используется только встроенный секрет GITHUB_TOKEN (выдаётся GitHub на время прогона),
+# в репозитории никаких ключей и паролей нет.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# новый push в ту же ветку отменяет устаревший прогон
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------- 1. общие проверки
+  checks:
+    name: Checks (gofmt, go vet, OpenAPI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod # кэш модулей Go включён по умолчанию
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::Файлы не отформатированы gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Lint OpenAPI specs
+        run: |
+          pip install --quiet openapi-spec-validator==0.7.1
+          for f in api/*.yaml; do
+            echo "== $f"
+            openapi-spec-validator "$f"
+          done
+
+  # ---------------------------------------------------------------- 2. сервисы (матрица)
+  service:
+    name: ${{ matrix.name }}
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # публикация образа в GitHub Container Registry
+    strategy:
+      fail-fast: false # падение одного сервиса не останавливает остальные
+      matrix:
+        include:
+          - { name: order-service, path: services/order-service }
+          - { name: dispatch-service, path: services/dispatch-service }
+          - { name: payment-service, path: services/payment-service }
+          - { name: notification-service, path: services/notification-service }
+          - { name: bank-mock, path: mocks/bank-mock }
+    env:
+      PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -v ./${{ matrix.path }}/...
+
+      - name: Unit tests
+        run: go test -race -count=1 -coverprofile=coverage.out ./${{ matrix.path }}/...
+
+      - name: Coverage
+        run: go tool cover -func=coverage.out | tail -1
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: env.PUBLISH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/delivery-${{ matrix.name }}
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build image (push only on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: SERVICE=${{ matrix.path }}
+          push: ${{ env.PUBLISH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ---------------------------------------------------------------- 3. сквозные тесты саги
+  e2e:
+    name: E2E saga tests
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Saga tests (4 services over real HTTP, in-memory broker)
+        run: go test -race -count=1 -v ./tests/...
+
+  # ---------------------------------------------------------------- 4. уязвимости (отчёт)
+  security:
+    name: Vulnerability scan (govulncheck)
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: govulncheck
+        continue-on-error: true # отчёт, сборку не блокирует
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # ---------------------------------------------------------------- 5. CD: деплой в staging
+  deploy-staging:
+    name: Deploy to staging + smoke test
+    needs: [service, e2e]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    permissions:
+      contents: read
+      packages: read
+    env:
+      COMPOSE: docker compose -f docker-compose.yml -f docker-compose.staging.yml
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image version = this commit
+        run: |
+          echo "REGISTRY=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=sha-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
+      - name: Pull images from registry
+        run: $COMPOSE pull
+
+      - name: Start staging (no build — only published images)
+        run: $COMPOSE up -d --no-build
+
+      - name: Smoke test (happy path + saga with compensation)
+        run: bash scripts/smoke-test.sh
+
+      - name: Service logs
+        if: failure()
+        run: $COMPOSE logs --no-color --tail 80
+
+      - name: Stop staging
+        if: always()
+        run: $COMPOSE down -v
