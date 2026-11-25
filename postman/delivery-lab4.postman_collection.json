@@ -53,7 +53,16 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/couriers/shifts"
+              "raw": "{{gw}}/api/v1/couriers/shifts",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "couriers",
+                "shifts"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -98,7 +107,16 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/dispatch/location"
+              "raw": "{{gw}}/api/v1/dispatch/location",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dispatch",
+                "location"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -141,7 +159,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -198,7 +224,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -230,7 +264,10 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{paymentUrl}}"
+              "raw": "{{paymentUrl}}",
+              "host": [
+                "{{paymentUrl}}"
+              ]
             }
           },
           "event": [
@@ -252,7 +289,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             }
           },
           "event": [
@@ -284,7 +330,17 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment"
+              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "couriers",
+                "{{courierId}}",
+                "assignment"
+              ]
             }
           },
           "event": [
@@ -306,7 +362,18 @@
             "method": "POST",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment/complete"
+              "raw": "{{gw}}/api/v1/couriers/{{courierId}}/assignment/complete",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "couriers",
+                "{{courierId}}",
+                "assignment",
+                "complete"
+              ]
             }
           },
           "event": [
@@ -327,7 +394,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             }
           },
           "event": [
@@ -354,7 +430,25 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders?page=1&size=10"
+              "raw": "{{gw}}/api/v1/orders?page=1&size=10",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "10"
+                }
+              ]
             },
             "description": "Список заказов клиента client-demo, новые сначала. Параметры page и size — пагинация (size от 1 до 100)."
           },
@@ -379,7 +473,22 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}"
+              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}",
+              "host": [
+                "{{notify}}"
+              ],
+              "path": [
+                "internal",
+                "v1",
+                "notifications",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "orderId",
+                  "value": "{{orderId}}"
+                }
+              ]
             }
           },
           "event": [
@@ -415,7 +524,16 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/couriers/shifts"
+              "raw": "{{gw}}/api/v1/couriers/shifts",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "couriers",
+                "shifts"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -460,7 +578,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -504,7 +630,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{paymentUrl}}?result=fail"
+              "raw": "{{paymentUrl}}?result=fail",
+              "host": [
+                "{{paymentUrl}}"
+              ],
+              "query": [
+                {
+                  "key": "result",
+                  "value": "fail"
+                }
+              ]
             }
           },
           "event": [
@@ -526,7 +661,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             }
           },
           "event": [
@@ -572,7 +716,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -616,7 +768,10 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{paymentUrl}}"
+              "raw": "{{paymentUrl}}",
+              "host": [
+                "{{paymentUrl}}"
+              ]
             }
           },
           "event": [
@@ -637,7 +792,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             }
           },
           "event": [
@@ -668,7 +832,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/{{orderId}}"
+              "raw": "{{gw}}/api/v1/orders/{{orderId}}",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "{{orderId}}"
+              ]
             },
             "description": "Запрос ждёт 25 секунд перед отправкой: dispatch-service публикует dispatch.search_failed по таймауту."
           },
@@ -701,7 +874,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{payment}}/internal/v1/payments/{{paymentId}}"
+              "raw": "{{payment}}/internal/v1/payments/{{paymentId}}",
+              "host": [
+                "{{payment}}"
+              ],
+              "path": [
+                "internal",
+                "v1",
+                "payments",
+                "{{paymentId}}"
+              ]
             }
           },
           "event": [
@@ -723,7 +905,22 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}"
+              "raw": "{{notify}}/internal/v1/notifications/logs?orderId={{orderId}}",
+              "host": [
+                "{{notify}}"
+              ],
+              "path": [
+                "internal",
+                "v1",
+                "notifications",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "orderId",
+                  "value": "{{orderId}}"
+                }
+              ]
             }
           },
           "event": [
@@ -755,7 +952,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -795,7 +1000,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -835,7 +1048,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "description": "Использует idemKey последнего созданного заказа.",
             "body": {
@@ -867,7 +1088,16 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders/00000000-0000-4000-8000-000000000000"
+              "raw": "{{gw}}/api/v1/orders/00000000-0000-4000-8000-000000000000",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders",
+                "00000000-0000-4000-8000-000000000000"
+              ]
             }
           },
           "event": [
@@ -889,7 +1119,25 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders?page=1&size=500"
+              "raw": "{{gw}}/api/v1/orders?page=1&size=500",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "size",
+                  "value": "500"
+                }
+              ]
             }
           },
           "event": [
@@ -911,7 +1159,17 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/internal/v1/orders/{{orderId}}/status"
+              "raw": "{{gw}}/internal/v1/orders/{{orderId}}/status",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "internal",
+                "v1",
+                "orders",
+                "{{orderId}}",
+                "status"
+              ]
             }
           },
           "event": [
@@ -938,7 +1196,16 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/dispatch/location"
+              "raw": "{{gw}}/api/v1/dispatch/location",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dispatch",
+                "location"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -974,7 +1241,16 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/payments/webhook"
+              "raw": "{{gw}}/api/v1/payments/webhook",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "payments",
+                "webhook"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -1020,7 +1296,15 @@
               }
             ],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -1053,7 +1337,15 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "description": "ПЕРЕД запросом: docker compose stop order-service\n\nNginx не может достучаться до order-service и сам отвечает 503 в формате Problem Details."
           },
@@ -1077,7 +1369,15 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{gw}}/api/v1/orders"
+              "raw": "{{gw}}/api/v1/orders",
+              "host": [
+                "{{gw}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "orders"
+              ]
             },
             "description": "ПЕРЕД запросом: docker compose start order-service payment-service (подожди ~5 с)"
           },
