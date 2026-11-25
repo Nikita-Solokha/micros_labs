@@ -344,6 +344,36 @@
           ]
         },
         {
+          "name": "9a. Список заказов клиента (пагинация)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Client-Id",
+                "value": "client-demo"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders?page=1&size=10"
+            },
+            "description": "Список заказов клиента client-demo, новые сначала. Параметры page и size — пагинация (size от 1 до 100)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "const r = pm.response.json();",
+                  "pm.test(\"есть total, page, size, items\", () => { pm.expect(r).to.have.keys(\"total\",\"page\",\"size\",\"items\"); });",
+                  "pm.test(\"наш заказ в списке\", () => pm.expect(r.items.map(o => o.id)).to.include(pm.collectionVariables.get(\"orderId\")));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "10. SMS клиенту (internal, напрямую в notification-service)",
           "request": {
             "method": "GET",
@@ -964,6 +994,100 @@
                 "exec": [
                   "pm.test(\"HTTP 400\", () => pm.response.to.have.status(400));",
                   "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(400); });"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Отключение сервиса → «сервис недоступен»",
+      "description": "Перед каждым запросом выполни в терминале команду из его описания.",
+      "item": [
+        {
+          "name": "1. payment остановлен → создание заказа 503",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"originAddress\": \"г. Ростов-на-Дону, пл. Гагарина, 1\",\n  \"destinationAddress\": \"г. Ростов-на-Дону, ул. Большая Садовая, 105\",\n  \"weight\": 2.5\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "ПЕРЕД запросом: docker compose stop payment-service\n\norder-service делает 3 попытки (≈6 с), отвечает 503 и сохраняет заказ как CANCELLED (компенсация). После 5 таких запросов подряд срабатывает circuit breaker — ответ приходит сразу."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", () => pm.response.to.have.status(503));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(503); });",
+                  "pm.test(\"причина: payment-service недоступен\", () => pm.expect(pm.response.json().detail).to.include(\"payment-service\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. order остановлен → gateway отвечает 503",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "description": "ПЕРЕД запросом: docker compose stop order-service\n\nNginx не может достучаться до order-service и сам отвечает 503 в формате Problem Details."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 503\", () => pm.response.to.have.status(503));",
+                  "pm.test(\"Problem Details\", () => { pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/problem+json\"); pm.expect(pm.response.json().status).to.eql(503); });",
+                  "pm.test(\"ответил сам gateway\", () => pm.expect(pm.response.json().title).to.eql(\"Сервис временно недоступен\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Всё запущено обратно → снова 200",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{gw}}/api/v1/orders"
+            },
+            "description": "ПЕРЕД запросом: docker compose start order-service payment-service (подожди ~5 с)"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));"
                 ]
               }
             }
