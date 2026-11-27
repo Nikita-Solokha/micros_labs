@@ -451,3 +451,8 @@ func TestHTTP_Delivered(t *testing.T) {
 		t.Fatalf("несуществующий заказ: ожидался 404, получили %d", rec.Code)
 	}
 }
+
+
+func TestDemoFail(t *testing.T) {
+    t.Errorf("DEMO: this test is intentionally broken for CI/CD demo")
+}
